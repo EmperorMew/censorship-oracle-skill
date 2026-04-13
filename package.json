@@ -1,22 +1,25 @@
 {
-  "name": "voidly-censor",
+  "name": "darkwatch",
   "version": "1.0.0",
-  "description": "Censorship Intelligence Oracle — on-chain attestations powered by Voidly",
+  "description": "Autonomous DeFi protection agent \u2014 monitors internet shutdowns, auto-executes emergency exit plans through TEE wallet",
   "type": "module",
   "bin": {
-    "voidly-censor": "./bin/censor.mjs"
+    "darkwatch": "./bin/censor.mjs"
   },
   "scripts": {
     "start": "node bin/censor.mjs",
     "test": "node test/cli.test.mjs"
   },
   "keywords": [
+    "darkwatch",
     "censorship",
-    "oracle",
+    "defi-protection",
+    "internet-shutdown",
     "bnb-chain",
-    "attestation",
+    "tee-wallet",
     "voidly",
-    "ai-agent"
+    "ai-agent",
+    "purrfect-claw"
   ],
   "author": "Voidly <api@voidly.ai>",
   "license": "MIT",

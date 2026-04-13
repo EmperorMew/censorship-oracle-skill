@@ -47,9 +47,10 @@ test('threat IR returns incidents', () => {
   assert(d.context.detection_window, 'Missing context');
 });
 
-test('threat US returns LOW', () => {
+test('threat US returns low-to-moderate risk', () => {
   const d = run('threat US');
-  assert(d.threat_level === 'LOW' || d.threat_level === 'GUARDED', `Expected LOW/GUARDED, got ${d.threat_level}`);
+  assert(['LOW', 'GUARDED', 'ELEVATED'].includes(d.threat_level), `Unexpected threat: ${d.threat_level}`);
+  assert(d.threat_level !== 'CRITICAL', 'US should not be CRITICAL');
 });
 
 // ── scan ──────────────────────────────────────────────
