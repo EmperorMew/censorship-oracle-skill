@@ -1,214 +1,177 @@
 ---
-name: voidly-censorship-oracle
-description: On-chain censorship intelligence oracle. Query risk scores, monitor incidents, write attestations to opBNB via TEE wallet. Autonomous monitoring mode auto-attests critical events. Powered by 2.2B+ measurements across 200 countries.
+name: darkwatch
+description: Autonomous DeFi protection agent. Monitors for internet shutdowns in real-time and auto-executes emergency exit plans through the TEE wallet before you lose access. 313 shutdowns hit 798M people in 2025. Zero had protection. Until now.
 ---
 
-# Voidly Censorship Intelligence Oracle
+# DARKWATCH
 
-An on-chain censorship intelligence oracle for BNB Chain. This skill lets you:
+Your AI bodyguard for when your government kills the internet.
 
-1. **Query** real-time censorship data for any country or domain
-2. **Write** verified risk scores and incident attestations to the CensorshipOracle contract on opBNB
-3. **Monitor** autonomously — the agent watches for critical incidents and auto-attests them on-chain
-4. **Verify** existing attestations by reading directly from the smart contract
+This skill monitors censorship signals across 200 countries in real-time. When a shutdown starts, it autonomously executes your pre-configured emergency plan through the TEE wallet — withdrawing your DeFi positions, swapping to stablecoins, and transferring to your cold wallet — BEFORE you lose internet access.
 
-Data from OONI, CensoredPlanet, IODA, and Voidly's 37+ node probe network. ML-classified with 99.8% F1 accuracy.
+## Tool: assess_threat
 
----
-
-## Tool: check_country_risk
-
-Check censorship risk for a country. Returns both API data AND on-chain oracle data (if available).
+Check the real-time threat level for a country. Returns a composite score from censorship data, active incidents, and 7-day shutdown forecast.
 
 ### Parameters
-- `country_code` (required) — ISO 3166-1 alpha-2 (e.g., IR, CN, RU)
+- `country_code` (required) — ISO 3166-1 alpha-2 (e.g., IR, CN, PK, RU, MM)
+
+### Execution
+```bash
+darkwatch threat <country_code>
+```
+Present the `threat_level`, `action`, and `signals` to the user. If threat is HIGH or CRITICAL and user has no plan, warn them.
+
+---
+
+## Tool: scan_all_countries
+
+Scan all 200 countries and rank by shutdown danger. Shows which countries have armed plans.
+
+### Execution
+```bash
+darkwatch scan
+```
+
+---
+
+## Tool: create_emergency_plan
+
+Create an emergency exit plan for a specific country. The plan defines what happens to the user's DeFi positions when a shutdown is detected.
+
+### Parameters
+- `country_code` (required)
 
 ### Execution
 1. Run:
    ```bash
-   voidly-censor check-country <country_code>
+   darkwatch setup <country_code>
    ```
-2. Present the `recommendation` field to the user.
-3. If `onchain` data is present, mention the last on-chain update time.
+2. Show the plan details to the user: trigger conditions, actions (Venus withdrawal, PancakeSwap, cold wallet transfer), gas estimates.
+3. Remind the user to arm the plan.
 
 ---
 
-## Tool: check_domain
+## Tool: arm_plan
 
-Check if a website is accessible in a specific country.
+Arm an emergency plan. When armed, DARKWATCH will auto-execute the plan when shutdown conditions are met.
 
 ### Parameters
-- `domain` (required) — e.g., twitter.com, whatsapp.com
-- `country_code` (required) — e.g., IR, CN
+- `plan_id` (required) — from `darkwatch plans`
 
 ### Execution
-```bash
-voidly-censor check-domain <domain> <country_code>
-```
-
----
-
-## Tool: get_incidents
-
-Get recent censorship incidents globally or by country.
-
-### Parameters
-- `country_code` (optional) — Filter by country
-- `limit` (optional) — Number of results (default: 10)
-
-### Execution
-```bash
-voidly-censor incidents --country <country_code> --limit <limit>
-```
-
----
-
-## Tool: get_forecast
-
-7-day shutdown risk forecast for a country.
-
-### Parameters
-- `country_code` (required)
-
-### Execution
-```bash
-voidly-censor forecast <country_code>
-```
-
----
-
-## Tool: update_oracle
-
-**ON-CHAIN WRITE.** Update a country's censorship risk score on the CensorshipOracle smart contract.
-
-### Parameters
-- `country_code` (required)
-
-### Execution
-1. Confirm with the user: "I'll update the on-chain risk score for {country}. This writes to the CensorshipOracle contract on opBNB. Proceed?"
-2. Wait for confirmation.
-3. Run:
-   ```bash
-   voidly-censor update-oracle <country_code>
-   ```
-4. If the output contains `tx_hash`, the transaction was executed directly. Show the explorer link.
-5. If the output contains `tx_step_file`, run:
-   ```bash
-   purr execute --file <tx_step_file>
-   ```
-6. Report the transaction hash to the user.
-
----
-
-## Tool: attest_incident
-
-**ON-CHAIN WRITE.** Create an immutable attestation of a censorship incident on the CensorshipOracle contract. This creates verifiable proof that the incident was detected by Voidly's ML classifier and signed by the TEE wallet.
-
-### Parameters
-- `incident_id` (required) — e.g., IR-2026-0150
-
-### Execution
-1. Confirm with the user: "I'll attest incident {id} on-chain. This creates an immutable record on opBNB. Proceed?"
-2. Wait for confirmation.
-3. Run:
-   ```bash
-   voidly-censor attest <incident_id>
-   ```
-4. If `tx_hash` is in the output, show the explorer link.
-5. If `tx_step_file` is in the output, run:
-   ```bash
-   purr execute --file <tx_step_file>
-   ```
-
----
-
-## Tool: start_monitor
-
-**AUTONOMOUS MODE.** Start monitoring Voidly's incident feed. When new critical incidents appear, the agent auto-generates attestations and writes them on-chain without being asked.
-
-### Execution
-1. Inform the user: "Starting autonomous censorship monitor. I'll watch for critical incidents and attest them on-chain automatically."
+1. Confirm: "Arming this plan means your DeFi positions will be automatically liquidated to stablecoins and transferred to your cold wallet when a shutdown is detected. Proceed?"
 2. Run:
    ```bash
-   voidly-censor monitor --interval 60
+   darkwatch arm <plan_id>
    ```
-3. The command runs indefinitely. Each line of output is a JSON event:
-   - `event: "auto_attested"` — an incident was attested. Show the tx hash.
-   - `event: "new_critical_incident"` — a new incident was found. Run the attest command.
-4. Periodically report to the user: "Monitoring active. {N} incidents attested so far."
 
 ---
 
-## Tool: verify_attestation
+## Tool: simulate_shutdown
 
-**ON-CHAIN READ.** Verify an existing attestation by reading it from the smart contract.
+Simulate a shutdown in a country. Shows a second-by-second timeline of what would happen — with and without DARKWATCH protection.
 
 ### Parameters
-- `incident_id` (required)
+- `country_code` (required)
 
 ### Execution
 ```bash
-voidly-censor verify <incident_id>
+darkwatch simulate <country_code>
 ```
-Present the on-chain data including attester address, timestamp, and confidence score.
+Present the timeline to the user. Highlight the difference between protected (funds secured in 20 seconds) and unprotected (liquidated in 40 minutes).
 
 ---
 
-## Tool: oracle_stats
+## Tool: start_watching
 
-Get statistics about the CensorshipOracle contract.
+Start autonomous monitoring mode. The agent continuously watches for shutdown signals and auto-executes armed plans when triggered.
+
+### Execution
+1. Tell the user: "Starting autonomous protection. I'll monitor shutdown signals and execute your armed plans if a shutdown is detected. You can close this chat — the monitoring continues."
+2. Run:
+   ```bash
+   darkwatch watch --country <country_code> --interval 30
+   ```
+3. Each output line is a JSON event. If `event` is `SHUTDOWN_DETECTED`, execute the emergency plan via TEE wallet:
+   ```bash
+   purr execute --file /tmp/darkwatch-redeem_venus.json
+   purr execute --file /tmp/darkwatch-swap_to_stable.json
+   purr execute --file /tmp/darkwatch-transfer_safe.json
+   ```
+
+---
+
+## Tool: send_heartbeat
+
+Prove you're still online. If heartbeats stop arriving, it's an early signal of connectivity loss.
 
 ### Execution
 ```bash
-voidly-censor stats
+darkwatch heartbeat
 ```
-Shows: total attestations, scored countries, contract owner, explorer link.
+
+---
+
+## Tool: check_status
+
+System status — armed plans, last heartbeat, protection coverage.
+
+### Execution
+```bash
+darkwatch status
+```
 
 ---
 
 ## Example Interactions
 
-**"Is it safe to trade in Iran right now?"**
-→ `check_country_risk` IR → present risk + recommendation
+**"Am I safe in Iran?"**
+→ `assess_threat` IR → Show threat level + recommendation
 
-**"Attest the latest Iran incident on-chain"**
-→ `get_incidents` --country IR → pick latest → confirm → `attest_incident`
+**"Protect my funds in case Pakistan shuts down"**
+→ `create_emergency_plan` PK → `arm_plan` → `start_watching`
 
-**"Update the oracle with China's current risk score"**
-→ confirm → `update_oracle` CN → show tx hash
+**"What happens if China goes dark right now?"**
+→ `simulate_shutdown` CN → Show timeline with and without protection
 
-**"Start monitoring for censorship events"**
-→ `start_monitor` → auto-attest critical incidents → report to user
+**"Show me the most dangerous countries"**
+→ `scan_all_countries` → Ranked list with threat levels
 
-**"Verify the Iran incident on the blockchain"**
-→ `verify_attestation` IR-2026-0150 → show on-chain data
+**"I'm traveling to Myanmar. Set up protection."**
+→ `assess_threat` MM → `create_emergency_plan` MM → `arm_plan` → "Your funds are now protected. I'll watch while you're there."
 
-**"Should I move my DeFi position in Pakistan?"**
-→ `check_country_risk` PK + `get_forecast` PK → advise timing based on risk + forecast
-
----
-
-## Architecture
+## How It Works
 
 ```
-User Query → Purrfect Claw Agent → SKILL.md → voidly-censor CLI
-                                                    ↓
-                                              Voidly API (200 countries, ML classifier)
-                                                    ↓
-                                              CensorshipOracle Contract (opBNB)
-                                                    ↓
-                                              TEE Wallet (purr execute)
-                                                    ↓
-                                              Verifiable On-Chain Attestation
+You sleep                          DARKWATCH watches
+    │                                    │
+    │    Government orders shutdown       │
+    │              │                      │
+    │    BGP routes withdrawn (T+0:00)    │
+    │              │                      │
+    │    Voidly detects anomaly (T+0:03)  │
+    │              │                      │
+    │    Multi-source confirm (T+0:05)   ─┤
+    │                                     │
+    │                              TEE wallet activates
+    │                              Redeem Venus (T+0:10)
+    │                              Swap to USDT (T+0:15)
+    │                              Transfer cold (T+0:20)
+    │                                     │
+    │    Full blackout (T+0:30)     ✅ Funds safe
+    │                                     │
+    │    Unprotected users               You wake up.
+    │    get liquidated (T+1:00)         Everything is fine.
 ```
 
-## Contract
+## Data
 
-- **Network:** opBNB (Chain ID: 5611 testnet / 204 mainnet)
-- **Contract:** CensorshipOracle
-- **Functions:** `updateCountryRisk`, `attestIncident`, `isSafe`, `verify`
-- **Events:** `CountryRiskUpdated`, `IncidentAttested`
+- 200 countries monitored
+- 313 shutdowns detected in 2025
+- 798 million people affected
+- $19.7B economic damage
+- Detection-to-protection: ~20 seconds
+- Detection-to-blackout: 5-30 minutes
 
-## About
-
-Built by [Voidly](https://voidly.ai) for the [Four.Meme AI Sprint](https://dorahacks.io/hackathon/fourmemeaisprint).
+Powered by [Voidly](https://voidly.ai) censorship intelligence. TEE security via [Purrfect Claw](https://docs.pieverse.io).

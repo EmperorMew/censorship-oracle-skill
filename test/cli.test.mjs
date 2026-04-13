@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Basic CLI integration tests — verifies all READ commands work
- * against the live Voidly API.
- *
+ * DARKWATCH CLI integration tests
  * Run: node test/cli.test.mjs
  */
 
@@ -25,116 +23,118 @@ function test(name, fn) {
 }
 
 function run(cmd) {
-  return JSON.parse(execSync(`${CLI} ${cmd}`, { encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }));
+  return JSON.parse(execSync(`${CLI} ${cmd}`, { encoding: 'utf8', timeout: 20000, stdio: ['pipe', 'pipe', 'pipe'] }));
 }
 
-function assert(condition, msg) {
-  if (!condition) throw new Error(msg);
-}
+function assert(condition, msg) { if (!condition) throw new Error(msg); }
 
-console.log('\n  voidly-censor CLI tests\n');
+console.log('\n  DARKWATCH CLI tests\n');
 
-// ── check-country ────────────────────────────────────────
+// ── threat ────────────────────────────────────────────
 
-test('check-country CN returns score > 0', () => {
-  const data = run('check-country CN');
-  assert(data.country === 'CN', `Expected CN, got ${data.country}`);
-  assert(data.censorship_score > 0, `Score should be > 0, got ${data.censorship_score}`);
-  assert(data.risk_level === 'high', `Expected high, got ${data.risk_level}`);
-  assert(data.name === 'China', `Expected China, got ${data.name}`);
+test('threat CN returns HIGH', () => {
+  const d = run('threat CN');
+  assert(d.threat_level === 'HIGH' || d.threat_level === 'ELEVATED' || d.threat_level === 'CRITICAL', `Unexpected: ${d.threat_level}`);
+  assert(d.threat_score > 0, 'Score should be > 0');
+  assert(d.action, 'Missing action');
+  assert(d.signals.active_incidents >= 0, 'Missing incidents');
 });
 
-test('check-country IR returns incidents', () => {
-  const data = run('check-country IR');
-  assert(data.active_incidents > 0, `Expected incidents > 0, got ${data.active_incidents}`);
-  assert(data.recent_incidents.length > 0, 'Expected recent incidents');
+test('threat IR returns incidents', () => {
+  const d = run('threat IR');
+  assert(d.signals.active_incidents > 0, `Expected incidents > 0`);
+  assert(d.recent_incidents.length > 0, 'Expected recent incidents');
+  assert(d.context.detection_window, 'Missing context');
 });
 
-test('check-country US returns low risk', () => {
-  const data = run('check-country US');
-  assert(data.risk_level === 'low', `Expected low, got ${data.risk_level}`);
+test('threat US returns LOW', () => {
+  const d = run('threat US');
+  assert(d.threat_level === 'LOW' || d.threat_level === 'GUARDED', `Expected LOW/GUARDED, got ${d.threat_level}`);
 });
 
-test('check-country XX handles unknown gracefully', () => {
-  const data = run('check-country XX');
-  assert(data.censorship_score === 0, 'Unknown country should return 0');
+// ── scan ──────────────────────────────────────────────
+
+test('scan returns ranked countries', () => {
+  const d = run('scan');
+  assert(d.scanned > 100, 'Should scan 100+ countries');
+  assert(d.at_risk > 0, 'Should find at-risk countries');
+  assert(d.countries[0].threat_level, 'Missing threat level');
+  assert(d.global_stats.shutdowns_2025 === 313, 'Wrong shutdown count');
 });
 
-// ── incidents ────────────────────────────────────────────
+// ── setup + arm + plans ──────────────────────────────
 
-test('incidents returns array with total', () => {
-  const data = run('incidents --limit 3');
-  assert(data.total > 0, `Expected total > 0, got ${data.total}`);
-  assert(data.incidents.length <= 3, `Expected <= 3 incidents, got ${data.incidents.length}`);
+test('setup creates a plan', () => {
+  const d = run('setup PK');
+  assert(d.status === 'plan_created', 'Should create plan');
+  assert(d.plan.actions.length === 3, 'Should have 3 actions');
+  assert(d.plan.trigger.min_confidence === 80, 'Should require 80% confidence');
+  assert(d.plan.execution.method === 'TEE wallet (Purrfect Claw)', 'Should use TEE');
 });
 
-test('incidents --country IR filters correctly', () => {
-  const data = run('incidents --country IR --limit 2');
-  for (const inc of data.incidents) {
-    assert(inc.country_code === 'IR', `Expected IR, got ${inc.country_code}`);
-  }
+test('arm activates a plan', () => {
+  const plans = run('plans');
+  assert(plans.plans.length > 0, 'Should have plans');
+  const planId = plans.plans[plans.plans.length - 1].id;
+  const d = run(`arm ${planId}`);
+  assert(d.status === 'armed', 'Should be armed');
+  assert(d.warning.includes('auto-execute'), 'Should warn about auto-execution');
 });
 
-test('incidents have required fields', () => {
-  const data = run('incidents --limit 1');
-  const inc = data.incidents[0];
-  assert(inc.id, 'Missing id');
-  assert(inc.severity, 'Missing severity');
-  assert(inc.started, 'Missing started');
-  assert(inc.sources, 'Missing sources');
+test('disarm deactivates a plan', () => {
+  const plans = run('plans');
+  const armed = plans.plans.find(p => p.armed);
+  assert(armed, 'Should have an armed plan');
+  const d = run(`disarm ${armed.id}`);
+  assert(d.status === 'disarmed', 'Should be disarmed');
 });
 
-// ── risk-score ───────────────────────────────────────────
+// ── simulate ─────────────────────────────────────────
 
-test('risk-score CN returns numeric score', () => {
-  const data = run('risk-score CN');
-  assert(typeof data.risk_score === 'number', `Expected number, got ${typeof data.risk_score}`);
-  assert(data.risk_score >= 0 && data.risk_score <= 100, `Score out of range: ${data.risk_score}`);
+test('simulate shows timeline', () => {
+  // Re-arm for simulation
+  const plans = run('plans');
+  const plan = plans.plans[plans.plans.length - 1];
+  run(`arm ${plan.id}`);
+
+  const d = run('simulate PK');
+  assert(d.timeline.length >= 7, 'Should have 7+ events');
+  assert(d.protected === true, 'Should show as protected');
+  assert(d.timeline.some(e => e.event.includes('DARKWATCH ACTIVATED')), 'Should show activation');
+  assert(d.timeline.some(e => e.event.includes('FUNDS SECURED')), 'Should show funds secured');
 });
 
-test('risk-score RU returns medium', () => {
-  const data = run('risk-score RU');
-  assert(data.risk_level === 'medium', `Expected medium, got ${data.risk_level}`);
-  assert(data.name === 'Russia', `Expected Russia, got ${data.name}`);
+test('simulate without plan shows liquidation', () => {
+  const d = run('simulate MM');
+  assert(d.protected === false, 'Should show unprotected');
+  assert(d.timeline.some(e => e.event.includes('LIQUIDATED') || e.event.includes('UNPROTECTED')), 'Should warn about liquidation');
 });
 
-// ── attest (without contract — should return ready) ──────
+// ── heartbeat + status ───────────────────────────────
 
-test('attest generates TxStep file', () => {
-  const data = run('attest IR-2026-0150');
-  assert(data.status === 'ready', `Expected ready, got ${data.status}`);
-  assert(data.incident_id === 'IR-2026-0150', `Wrong incident ID: ${data.incident_id}`);
-  assert(data.tx_step_file, 'Missing tx_step_file');
-  assert(data.instruction.includes('purr execute'), 'Missing purr execute instruction');
+test('heartbeat records timestamp', () => {
+  const d = run('heartbeat');
+  assert(d.status === 'heartbeat_sent', 'Should confirm heartbeat');
+  assert(d.timestamp, 'Should have timestamp');
 });
 
-// ── update-oracle (without contract — should return ready) ──
-
-test('update-oracle generates TxStep file', () => {
-  const data = run('update-oracle CN');
-  assert(data.status === 'ready', `Expected ready, got ${data.status}`);
-  assert(data.country === 'CN', `Wrong country: ${data.country}`);
-  assert(data.score > 0, `Score should be > 0`);
-  assert(data.tx_step_file, 'Missing tx_step_file');
+test('status shows system state', () => {
+  const d = run('status');
+  assert(d.darkwatch === 'active', 'Should show active');
+  assert(d.plans.total > 0, 'Should show plans');
+  assert(d.last_heartbeat !== 'never', 'Should show heartbeat');
 });
 
-// ── forecast ─────────────────────────────────────────────
+// ── help ──────────────────────────────────────────────
 
-test('forecast returns data for IR', () => {
-  const data = run('forecast IR');
-  assert(data.country === 'IR', `Expected IR, got ${data.country}`);
-  assert(data.forecast, 'Missing forecast array');
+test('no args shows DARKWATCH banner', () => {
+  const output = execSync(CLI, { encoding: 'utf8', timeout: 5000 });
+  assert(output.includes('bodyguard') || output.includes('DARKWATCH') || output.includes('darkwatch'), 'Should show banner');
+  assert(output.includes('798 million'), 'Should show stats');
+  assert(output.includes('bodyguard'), 'Should show tagline');
 });
 
-// ── help ─────────────────────────────────────────────────
-
-test('no args shows help without error', () => {
-  const output = execSync(`${CLI}`, { encoding: 'utf8', timeout: 5000 });
-  assert(output.includes('voidly-censor'), 'Help should contain CLI name');
-  assert(output.includes('check-country'), 'Help should list commands');
-});
-
-// ── Summary ──────────────────────────────────────────────
+// ── Summary ──────────────────────────────────────────
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);
