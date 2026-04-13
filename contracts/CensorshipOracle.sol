@@ -4,177 +4,71 @@ pragma solidity ^0.8.19;
 /**
  * @title CensorshipOracle
  * @notice On-chain censorship intelligence oracle powered by Voidly.
- *         Stores country risk scores and verified censorship incident attestations.
- *         Any DeFi protocol can query this oracle to assess censorship risk
- *         before executing transactions in high-risk regions.
- * @dev Deployed on opBNB for minimal gas costs.
- * @author Voidly (voidly.ai) — Network intelligence built on trust.
+ *         Stores country risk scores and censorship incident attestations.
+ * @author Voidly (voidly.ai)
  */
 contract CensorshipOracle {
     address public owner;
+    uint256 public totalAttestations;
 
     struct CountryRisk {
-        uint8 score;          // 0-100 (higher = more censored)
-        uint64 updatedAt;     // Last update timestamp
-        uint16 incidentCount; // Number of active incidents
-        string riskLevel;     // "critical", "high", "medium", "low"
+        uint8 score;
+        uint64 updatedAt;
+        uint16 incidentCount;
     }
 
     struct Incident {
-        string incidentId;    // e.g., "IR-2026-0150"
-        string country;       // ISO 3166-1 alpha-2
-        string title;
-        string severity;      // "critical", "warning", "info"
-        string incidentType;  // "censorship", "disruption"
-        uint8 confidence;     // 0-100
-        uint32 measurements;  // Number of confirming measurements
-        uint64 timestamp;     // When the incident started
-        string sources;       // "ooni,ioda,censoredplanet"
-        address attestedBy;   // TEE wallet that created the attestation
+        bytes2 countryCode;
+        uint8 confidence;
+        uint8 severity; // 1=info, 2=warning, 3=critical
+        uint32 measurements;
+        uint64 timestamp;
+        address attestedBy;
     }
 
-    // Country code => risk data
-    mapping(string => CountryRisk) public countryRisks;
+    mapping(bytes2 => CountryRisk) public countryRisks;
+    mapping(bytes32 => Incident) public incidents;
+    bytes2[] public scoredCountries;
+    mapping(bytes2 => bool) private _exists;
 
-    // Incident ID => attestation
-    mapping(string => Incident) public incidents;
-
-    // Total attestation count
-    uint256 public totalAttestations;
-
-    // All country codes that have been scored
-    string[] public scoredCountries;
-    mapping(string => bool) private countryExists;
-
-    // Events
-    event CountryRiskUpdated(
-        string indexed country,
-        uint8 score,
-        string riskLevel,
-        uint16 incidentCount,
-        uint64 timestamp
-    );
-
-    event IncidentAttested(
-        string indexed incidentId,
-        string country,
-        string severity,
-        uint8 confidence,
-        uint32 measurements,
-        uint64 timestamp,
-        address attestedBy
-    );
+    event CountryRiskUpdated(bytes2 indexed country, uint8 score, uint16 incidents, uint64 ts);
+    event IncidentAttested(bytes32 indexed incidentHash, bytes2 indexed country, uint8 severity, uint8 confidence, uint64 ts);
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "CensorshipOracle: caller is not the owner");
+        require(msg.sender == owner, "not owner");
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
-    }
+    constructor() { owner = msg.sender; }
 
-    /**
-     * @notice Update the censorship risk score for a country.
-     * @param country ISO 3166-1 alpha-2 code (e.g., "IR", "CN", "RU")
-     * @param score Risk score 0-100 (higher = more censored)
-     * @param riskLevel Human-readable level ("critical", "high", "medium", "low")
-     * @param incidentCount Number of active censorship incidents
-     */
-    function updateCountryRisk(
-        string calldata country,
-        uint8 score,
-        string calldata riskLevel,
-        uint16 incidentCount
-    ) external onlyOwner {
-        if (!countryExists[country]) {
+    function updateCountryRisk(bytes2 country, uint8 score, uint16 incidentCount) external onlyOwner {
+        if (!_exists[country]) {
             scoredCountries.push(country);
-            countryExists[country] = true;
+            _exists[country] = true;
         }
-
-        countryRisks[country] = CountryRisk({
-            score: score,
-            updatedAt: uint64(block.timestamp),
-            incidentCount: incidentCount,
-            riskLevel: riskLevel
-        });
-
-        emit CountryRiskUpdated(country, score, riskLevel, incidentCount, uint64(block.timestamp));
+        countryRisks[country] = CountryRisk(score, uint64(block.timestamp), incidentCount);
+        emit CountryRiskUpdated(country, score, incidentCount, uint64(block.timestamp));
     }
 
-    /**
-     * @notice Attest a verified censorship incident on-chain.
-     * @dev Called by the AI agent via the TEE wallet. Creates an immutable
-     *      record that can be verified by anyone.
-     */
     function attestIncident(
-        string calldata incidentId,
-        string calldata country,
-        string calldata title,
-        string calldata severity,
-        string calldata incidentType,
+        bytes32 incidentHash,
+        bytes2 country,
+        uint8 severity,
         uint8 confidence,
         uint32 measurements,
-        uint64 timestamp,
-        string calldata sources
+        uint64 timestamp
     ) external onlyOwner {
-        require(bytes(incidents[incidentId].incidentId).length == 0, "Incident already attested");
-
-        incidents[incidentId] = Incident({
-            incidentId: incidentId,
-            country: country,
-            title: title,
-            severity: severity,
-            incidentType: incidentType,
-            confidence: confidence,
-            measurements: measurements,
-            timestamp: timestamp,
-            sources: sources,
-            attestedBy: msg.sender
-        });
-
+        require(incidents[incidentHash].attestedBy == address(0), "already attested");
+        incidents[incidentHash] = Incident(country, confidence, severity, measurements, timestamp, msg.sender);
         totalAttestations++;
-
-        emit IncidentAttested(
-            incidentId,
-            country,
-            severity,
-            confidence,
-            measurements,
-            timestamp,
-            msg.sender
-        );
+        emit IncidentAttested(incidentHash, country, severity, confidence, timestamp);
     }
 
-    /**
-     * @notice Check if it's safe to transact from a country.
-     * @return score Risk score (0-100)
-     * @return safe True if score < 50
-     * @return level Risk level string
-     * @return lastUpdate When the data was last updated
-     */
-    function isSafe(string calldata country) external view returns (
-        uint8 score,
-        bool safe,
-        string memory level,
-        uint64 lastUpdate
-    ) {
-        CountryRisk memory risk = countryRisks[country];
-        return (risk.score, risk.score < 50, risk.riskLevel, risk.updatedAt);
+    function isSafe(bytes2 country) external view returns (uint8 score, bool safe, uint64 lastUpdate) {
+        CountryRisk memory r = countryRisks[country];
+        return (r.score, r.score < 50, r.updatedAt);
     }
 
-    /**
-     * @notice Get the number of scored countries.
-     */
-    function getScoredCountryCount() external view returns (uint256) {
-        return scoredCountries.length;
-    }
-
-    /**
-     * @notice Transfer oracle ownership (e.g., to a TEE wallet).
-     */
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Invalid address");
-        owner = newOwner;
-    }
+    function getScoredCountryCount() external view returns (uint256) { return scoredCountries.length; }
+    function transferOwnership(address newOwner) external onlyOwner { owner = newOwner; }
 }

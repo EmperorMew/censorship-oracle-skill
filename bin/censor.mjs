@@ -34,15 +34,30 @@ const ORACLE_ADDRESS = process.env.ORACLE_ADDRESS || '';
 const PRIVATE_KEY = process.env.PRIVATE_KEY || '';
 
 const ORACLE_ABI = [
-  "function updateCountryRisk(string country, uint8 score, string riskLevel, uint16 incidentCount)",
-  "function attestIncident(string incidentId, string country, string title, string severity, string incidentType, uint8 confidence, uint32 measurements, uint64 timestamp, string sources)",
-  "function isSafe(string country) view returns (uint8 score, bool safe, string level, uint64 lastUpdate)",
-  "function countryRisks(string) view returns (uint8 score, uint64 updatedAt, uint16 incidentCount, string riskLevel)",
-  "function incidents(string) view returns (string incidentId, string country, string title, string severity, string incidentType, uint8 confidence, uint32 measurements, uint64 timestamp, string sources, address attestedBy)",
+  "function updateCountryRisk(bytes2 country, uint8 score, uint16 incidentCount)",
+  "function attestIncident(bytes32 incidentHash, bytes2 country, uint8 severity, uint8 confidence, uint32 measurements, uint64 timestamp)",
+  "function isSafe(bytes2 country) view returns (uint8 score, bool safe, uint64 lastUpdate)",
+  "function countryRisks(bytes2) view returns (uint8 score, uint64 updatedAt, uint16 incidentCount)",
+  "function incidents(bytes32) view returns (bytes2 countryCode, uint8 confidence, uint8 severity, uint32 measurements, uint64 timestamp, address attestedBy)",
   "function totalAttestations() view returns (uint256)",
   "function getScoredCountryCount() view returns (uint256)",
   "function owner() view returns (address)",
 ];
+
+// Convert 2-letter country code to bytes2
+function countryToBytes2(code) {
+  return '0x' + Buffer.from(code.toUpperCase().slice(0, 2)).toString('hex');
+}
+
+// Convert incident ID to bytes32 hash
+function incidentToHash(id) {
+  return ethers.utils.keccak256(ethers.utils.toUtf8Bytes(id));
+}
+
+// Severity string to uint8
+function severityToUint(s) {
+  return s === 'critical' ? 3 : s === 'warning' ? 2 : 1;
+}
 
 async function fetchJSON(url) {
   const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -71,11 +86,21 @@ function getRiskLevel(score) {
   return 'low';
 }
 
+// Helper: get country score from censorship index
+async function getCountryScore(code) {
+  try {
+    const index = await fetchJSON(`${API}/data/censorship-index.json`);
+    const countries = index.countries || [];
+    const match = countries.find(c => c.code === code);
+    return match || null;
+  } catch { return null; }
+}
+
 // ─── CHECK COUNTRY (API only) ────────────────────────────────────────
 async function checkCountry(code) {
   code = code.toUpperCase();
   const [indexRes, forecastRes, incRes] = await Promise.allSettled([
-    fetchJSON(`${API}/data/country/${code}`),
+    getCountryScore(code),
     fetchJSON(`${API}/v1/forecast/${code}/7day`),
     fetchJSON(`${API}/data/incidents?country=${code}&limit=5`),
   ]);
@@ -115,16 +140,17 @@ async function checkCountry(code) {
   if (ORACLE_ADDRESS) {
     try {
       const contract = getContract(getProvider());
-      const [onchainScore, safe, level, lastUpdate] = await contract.isSafe(code);
+      const [onchainScore, safe, lastUpdate] = await contract.isSafe(countryToBytes2(code));
       result.onchain = {
         score: onchainScore,
         safe,
-        level,
         last_update: lastUpdate > 0 ? new Date(lastUpdate * 1000).toISOString() : 'never',
         contract: ORACLE_ADDRESS,
         explorer: `https://testnet.opbnbscan.com/address/${ORACLE_ADDRESS}`,
       };
-    } catch {}
+    } catch (err) {
+      console.error(`[onchain] Could not read oracle: ${err.message}`);
+    }
   }
 
   console.log(JSON.stringify(result, null, 2));
@@ -167,8 +193,8 @@ async function getForecast(code) {
 // ─── RISK SCORE ──────────────────────────────────────────────────────
 async function getRiskScore(code) {
   code = code.toUpperCase();
-  const country = await fetchJSON(`${API}/data/country/${code}`);
-  const score = country.score ?? 0;
+  const country = await getCountryScore(code);
+  const score = country?.score ?? 0;
   console.log(JSON.stringify({
     country: code,
     name: country.countryName || code,
@@ -183,7 +209,7 @@ async function updateOracle(code) {
   console.error(`[oracle] Fetching risk data for ${code}...`);
 
   const [countryRes, incRes] = await Promise.allSettled([
-    fetchJSON(`${API}/data/country/${code}`),
+    getCountryScore(code),
     fetchJSON(`${API}/data/incidents?country=${code}&limit=1`),
   ]);
 
@@ -195,8 +221,9 @@ async function updateOracle(code) {
 
   // Generate TxStep for purr execute
   const iface = new ethers.utils.Interface(ORACLE_ABI);
+  const countryBytes = countryToBytes2(code);
   const calldata = iface.encodeFunctionData('updateCountryRisk', [
-    code, score, level, incidentCount
+    countryBytes, score, incidentCount
   ]);
 
   const txStep = [{
@@ -215,7 +242,7 @@ async function updateOracle(code) {
     console.error(`[oracle] Writing ${code} score=${score} level=${level} incidents=${incidentCount} on-chain...`);
     const signer = getSigner();
     const contract = getContract(signer);
-    const tx = await contract.updateCountryRisk(code, score, level, incidentCount);
+    const tx = await contract.updateCountryRisk(countryBytes, score, incidentCount);
     const receipt = await tx.wait();
     console.log(JSON.stringify({
       status: 'success',
@@ -256,13 +283,14 @@ async function attestIncident(incidentId) {
   const confidence = Math.round((inc.confidence || 0) * 100);
   const measurements = inc.measurementCount || 0;
   const timestamp = Math.floor(new Date(inc.startTime || inc.createdAt).getTime() / 1000);
-  const sources = (inc.sources || []).join(',');
+  const severity = severityToUint(inc.severity);
+  const incidentHash = incidentToHash(id);
+  const countryBytes = countryToBytes2(inc.country);
 
   // Generate TxStep
   const iface = new ethers.utils.Interface(ORACLE_ABI);
   const calldata = iface.encodeFunctionData('attestIncident', [
-    id, inc.country, inc.title, inc.severity,
-    inc.incidentType || 'unknown', confidence, measurements, timestamp, sources
+    incidentHash, countryBytes, severity, confidence, measurements, timestamp
   ]);
 
   const txStep = [{
@@ -281,8 +309,7 @@ async function attestIncident(incidentId) {
     const contract = getContract(signer);
     try {
       const tx = await contract.attestIncident(
-        id, inc.country, inc.title, inc.severity,
-        inc.incidentType || 'unknown', confidence, measurements, timestamp, sources
+        incidentHash, countryBytes, severity, confidence, measurements, timestamp
       );
       const receipt = await tx.wait();
       console.log(JSON.stringify({
@@ -340,10 +367,9 @@ async function monitor(intervalSec = 60) {
               const signer = getSigner();
               const contract = getContract(signer);
               const tx = await contract.attestIncident(
-                id, inc.country, inc.title, inc.severity,
-                inc.incidentType || 'unknown', confidence,
-                inc.measurementCount || 0, timestamp,
-                (inc.sources || []).join(',')
+                incidentToHash(id), countryToBytes2(inc.country),
+                severityToUint(inc.severity), confidence,
+                inc.measurementCount || 0, timestamp
               );
               const receipt = await tx.wait();
               console.log(JSON.stringify({
@@ -389,25 +415,25 @@ async function monitor(intervalSec = 60) {
 // ─── VERIFY (read from chain) ────────────────────────────────────────
 async function verify(incidentId) {
   const contract = getContract(getProvider());
-  const inc = await contract.incidents(incidentId);
+  const hash = incidentToHash(incidentId);
+  const inc = await contract.incidents(hash);
 
-  if (!inc.incidentId || inc.incidentId === '') {
-    console.log(JSON.stringify({ status: 'not_found', incident_id: incidentId }));
+  if (inc.attestedBy === '0x0000000000000000000000000000000000000000') {
+    console.log(JSON.stringify({ status: 'not_found', incident_id: incidentId, hash }));
     return;
   }
 
+  const severityMap = { 1: 'info', 2: 'warning', 3: 'critical' };
   console.log(JSON.stringify({
     status: 'verified',
     onchain: {
-      incident_id: inc.incidentId,
-      country: inc.country,
-      title: inc.title,
-      severity: inc.severity,
-      type: inc.incidentType,
+      incident_id: incidentId,
+      incident_hash: hash,
+      country_code: ethers.utils.toUtf8String(inc.countryCode),
+      severity: severityMap[inc.severity] || `unknown(${inc.severity})`,
       confidence: inc.confidence,
       measurements: inc.measurements,
-      timestamp: new Date(inc.timestamp * 1000).toISOString(),
-      sources: inc.sources,
+      timestamp: new Date(inc.timestamp.toNumber() * 1000).toISOString(),
       attested_by: inc.attestedBy,
     },
     contract: ORACLE_ADDRESS,
