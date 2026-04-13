@@ -5,7 +5,7 @@ description: On-chain censorship intelligence oracle. Query risk scores, monitor
 
 # Voidly Censorship Intelligence Oracle
 
-The world's first on-chain censorship oracle. This skill lets you:
+An on-chain censorship intelligence oracle for BNB Chain. This skill lets you:
 
 1. **Query** real-time censorship data for any country or domain
 2. **Write** verified risk scores and incident attestations to the CensorshipOracle contract on opBNB

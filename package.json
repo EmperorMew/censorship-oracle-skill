@@ -7,7 +7,8 @@
     "voidly-censor": "./bin/censor.mjs"
   },
   "scripts": {
-    "start": "node bin/censor.mjs"
+    "start": "node bin/censor.mjs",
+    "test": "node test/cli.test.mjs"
   },
   "keywords": [
     "censorship",

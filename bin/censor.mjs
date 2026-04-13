@@ -86,13 +86,20 @@ function getRiskLevel(score) {
   return 'low';
 }
 
-// Helper: get country score from censorship index
+// Cache: censorship index (fetched once per session, reused across commands)
+let _indexCache = null;
+let _indexCacheTime = 0;
+const INDEX_CACHE_TTL = 300000; // 5 minutes
+
 async function getCountryScore(code) {
   try {
-    const index = await fetchJSON(`${API}/data/censorship-index.json`);
-    const countries = index.countries || [];
-    const match = countries.find(c => c.code === code);
-    return match || null;
+    const now = Date.now();
+    if (!_indexCache || now - _indexCacheTime > INDEX_CACHE_TTL) {
+      _indexCache = await fetchJSON(`${API}/data/censorship-index.json`);
+      _indexCacheTime = now;
+    }
+    const countries = _indexCache.countries || [];
+    return countries.find(c => c.code === code) || null;
   } catch { return null; }
 }
 
@@ -112,7 +119,7 @@ async function checkCountry(code) {
 
   const result = {
     country: code,
-    name: country?.countryName || code,
+    name: country?.country || country?.countryName || code,
     censorship_score: score,
     risk_level: getRiskLevel(score),
     active_incidents: recent?.total ?? 0,
@@ -197,7 +204,7 @@ async function getRiskScore(code) {
   const score = country?.score ?? 0;
   console.log(JSON.stringify({
     country: code,
-    name: country.countryName || code,
+    name: country?.country || country?.countryName || code,
     risk_score: score,
     risk_level: getRiskLevel(score),
   }, null, 2));
@@ -408,8 +415,20 @@ async function monitor(intervalSec = 60) {
     }
   };
 
+  // Graceful shutdown
+  let running = true;
+  const shutdown = () => {
+    console.error(`\n[monitor] Shutting down. ${attested.size} incidents tracked.`);
+    running = false;
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
   await tick();
-  setInterval(tick, intervalSec * 1000);
+  const timer = setInterval(async () => {
+    if (running) await tick();
+  }, intervalSec * 1000);
 }
 
 // ─── VERIFY (read from chain) ────────────────────────────────────────
