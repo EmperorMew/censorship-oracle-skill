@@ -9,7 +9,17 @@
   "scripts": {
     "start": "node bin/censor.mjs"
   },
-  "keywords": ["censorship", "oracle", "bnb-chain", "attestation", "voidly", "ai-agent"],
+  "keywords": [
+    "censorship",
+    "oracle",
+    "bnb-chain",
+    "attestation",
+    "voidly",
+    "ai-agent"
+  ],
   "author": "Voidly <api@voidly.ai>",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^5.8.0"
+  }
 }
