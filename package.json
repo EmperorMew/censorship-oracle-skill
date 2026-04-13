@@ -1,0 +1,15 @@
+{
+  "name": "voidly-censor",
+  "version": "1.0.0",
+  "description": "Censorship Intelligence Oracle — on-chain attestations powered by Voidly",
+  "type": "module",
+  "bin": {
+    "voidly-censor": "./bin/censor.mjs"
+  },
+  "scripts": {
+    "start": "node bin/censor.mjs"
+  },
+  "keywords": ["censorship", "oracle", "bnb-chain", "attestation", "voidly", "ai-agent"],
+  "author": "Voidly <api@voidly.ai>",
+  "license": "MIT"
+}
